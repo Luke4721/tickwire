@@ -4,26 +4,31 @@
 
 namespace tickwire {
 
-    NetworkReceiver::NetworkReceiver(Socket& socket,
-                                     BufferPool& pool,
+    NetworkReceiver::NetworkReceiver(Socket&                   socket,
+                                     BufferPool&               pool,
                                      SPSCQueue<PacketBuffer*>& queue,
-                                     Metrics& metrics
-                                     )
+                                     Metrics&                  metrics) noexcept
         : socket_(socket), pool_(pool), queue_(queue), metrics_(metrics) {}
 
-    void NetworkReceiver::poll()
+    void NetworkReceiver::poll() noexcept
     {
-        std::uint8_t temp_buffer[MAX_PAYLOAD];
+        uint8_t temp_buffer[MAX_PAYLOAD];
+
+        sockaddr_storage storage{};
+        int addr_len = static_cast<int>(sizeof(storage));
+
+        int received = socket_.receive(temp_buffer, MAX_PAYLOAD, &storage, &addr_len);
+
+        if (received <= 0)
+            return;
 
         TickWireAddress sender{};
-        std::size_t received = 0;
+        if (!from_sockaddr(&storage, addr_len, sender))
+            return; // unknown address family — discard packet
 
-        if (!socket_.receive(temp_buffer, MAX_PAYLOAD, sender, received))
-            return;
         ++metrics_.packets_received;
 
         auto buffer_opt = pool_.acquire();
-
         if (!buffer_opt)
         {
             ++metrics_.packets_dropped_pool;
@@ -33,13 +38,13 @@ namespace tickwire {
         PacketBuffer* buffer = *buffer_opt;
 
         std::memcpy(buffer->payload.data(), temp_buffer, received);
-
         buffer->metadata.payload_size = static_cast<std::uint16_t>(received);
-        buffer->metadata.source = sender;
+        buffer->metadata.source       = sender;
 
-        auto now = std::chrono::steady_clock::now().time_since_epoch();
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
         buffer->metadata.timestamp_ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+
         ++metrics_.packets_processed;
 
         if (!queue_.push(buffer))
@@ -48,7 +53,62 @@ namespace tickwire {
             pool_.release(buffer);
             return;
         }
+
         ++metrics_.packets_enqueued;
     }
 
-}
+    int NetworkReceiver::drain(int max_packets) noexcept
+    {
+        int count = 0;
+        while (count < max_packets)
+        {
+            uint8_t temp_buffer[MAX_PAYLOAD];
+
+            sockaddr_storage storage{};
+            int addr_len = static_cast<int>(sizeof(storage));
+
+            int received = socket_.receive(temp_buffer, MAX_PAYLOAD, &storage, &addr_len);
+
+            if (received <= 0)
+                break; // no more data available right now
+
+            TickWireAddress sender{};
+            if (!from_sockaddr(&storage, addr_len, sender))
+                continue; // bad address, skip this packet
+
+            ++metrics_.packets_received;
+
+            auto buffer_opt = pool_.acquire();
+            if (!buffer_opt)
+            {
+                ++metrics_.packets_dropped_pool;
+                continue;
+            }
+
+            PacketBuffer* buffer = *buffer_opt;
+
+            std::memcpy(buffer->payload.data(), temp_buffer, received);
+            buffer->metadata.payload_size = static_cast<std::uint16_t>(received);
+            buffer->metadata.source       = sender;
+
+            const auto now = std::chrono::steady_clock::now().time_since_epoch();
+            buffer->metadata.timestamp_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+
+            ++metrics_.packets_processed;
+
+            if (!queue_.push(buffer))
+            {
+                ++metrics_.packets_dropped_queue;
+                pool_.release(buffer);
+                continue;
+            }
+
+            ++metrics_.packets_enqueued;
+            ++count;
+        }
+
+        return count;
+    }
+
+} // namespace tickwire

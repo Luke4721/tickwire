@@ -1,86 +1,87 @@
+// src/address.cpp
 #include "tickwire/address.h"
+
+#ifdef _WIN32
+#   include <winsock2.h>
+#   include <ws2tcpip.h>
+#else
+#   include <sys/socket.h>
+#   include <netinet/in.h>
+#   include <arpa/inet.h>
+#endif
 
 #include <cstring>
 
-#if defined (_WIN32)
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-#else
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <arpa/inet.h>
+namespace tickwire {
 
-#endif
-
-namespace tickwire
-{
-    bool from_sockaddr(const void* addr, TickWireAddress& out)
+    bool from_sockaddr(const void* addr, int addr_len, TickWireAddress& out) noexcept
     {
-        const sockaddr* sa = reinterpret_cast<const sockaddr*>(addr);
+        if (!addr || addr_len <= 0)
+            return false;
 
-        if (sa->sa_family == AF_INET) //If the pointer is IPv4
+        const auto* sa = static_cast<const sockaddr*>(addr);
+
+        if (sa->sa_family == AF_INET)
         {
-            const sockaddr_in* v4 = reinterpret_cast<const sockaddr_in*>(sa);
+            if (addr_len < static_cast<int>(sizeof(sockaddr_in)))
+                return false;
 
-            //Clear address first
-            out.ip.fill(0);
-
-            // IPv4-mapped IPv6 prefix ::ffff
-            out.ip[10] = 0xff;
-            out.ip[11] = 0xff;
-
-            // Copy IPv4 bytes into last 4 bytes.
-            std::memcpy(&out.ip[12], &v4->sin_addr,4);
-
-            out.port = v4->sin_port;
-            out.family = AF_INET;
+            const auto* s4 = static_cast<const sockaddr_in*>(addr);
+            out.family = AddressFamily::IPv4;
+            out.port   = ntohs(s4->sin_port);  // convert to host byte order for consistency
+            std::memcpy(out.ip_bytes.data(), &s4->sin_addr, 4);
             return true;
         }
 
-        if (sa->sa_family == AF_INET6) {                    //  If the pointer is IPv6
-            const sockaddr_in6* v6 = reinterpret_cast<const sockaddr_in6*>(sa);
+        if (sa->sa_family == AF_INET6)
+        {
+            if (addr_len < static_cast<int>(sizeof(sockaddr_in6)))
+                return false;
 
-            std::memcpy(out.ip.data(), &v6->sin6_addr, 16);
-
-            out.port   = v6->sin6_port;
-            out.family = AF_INET6;
+            const auto* s6 = static_cast<const sockaddr_in6*>(addr);
+            out.family = AddressFamily::IPv6;
+            out.port   = ntohs(s6->sin6_port);
+            std::memcpy(out.ip_bytes.data(), &s6->sin6_addr, 16);
             return true;
         }
-        return false;
+
+        return false; // unsupported family
     }
 
-    bool to_sockaddr(const TickWireAddress& in, void* addr, int& addr_len)
+    bool to_sockaddr(const TickWireAddress& in, void* addr, int& addr_len) noexcept
     {
-        if (in.family == AF_INET) {
-            sockaddr_in* v4 = reinterpret_cast<sockaddr_in*>(addr);
-            std::memset(v4, 0, sizeof(sockaddr_in));
+        if (!addr)
+            return false;
 
-            v4->sin_family = AF_INET;
-            v4->sin_port   = in.port;
+        if (in.family == AddressFamily::IPv4)
+        {
+            if (addr_len < static_cast<int>(sizeof(sockaddr_in)))
+                return false;
 
-            // Extract IPv4 from mapped form
-            std::memcpy(&v4->sin_addr, &in.ip[12], 4);
-
-            addr_len = sizeof(sockaddr_in);
+            auto* s4 = static_cast<sockaddr_in*>(addr);
+            std::memset(s4, 0, sizeof(sockaddr_in));
+            s4->sin_family = AF_INET;
+            s4->sin_port   = htons(in.port);
+            std::memcpy(&s4->sin_addr, in.ip_bytes.data(), 4);
+            addr_len = static_cast<int>(sizeof(sockaddr_in));
             return true;
         }
 
-        if (in.family == AF_INET6) {
-            sockaddr_in6* v6 = reinterpret_cast<sockaddr_in6*>(addr);
-            std::memset(v6, 0, sizeof(sockaddr_in6));
+        if (in.family == AddressFamily::IPv6)
+        {
+            if (addr_len < static_cast<int>(sizeof(sockaddr_in6)))
+                return false;
 
-            v6->sin6_family = AF_INET6;
-            v6->sin6_port   = in.port;
-
-            std::memcpy(&v6->sin6_addr, in.ip.data(), 16);
-
-            addr_len = sizeof(sockaddr_in6);
+            auto* s6 = static_cast<sockaddr_in6*>(addr);
+            std::memset(s6, 0, sizeof(sockaddr_in6));
+            s6->sin6_family = AF_INET6;
+            s6->sin6_port   = htons(in.port);
+            std::memcpy(&s6->sin6_addr, in.ip_bytes.data(), 16);
+            addr_len = static_cast<int>(sizeof(sockaddr_in6));
             return true;
         }
 
-        return false;
+        return false; // Unknown family
     }
 
 } // namespace tickwire
-
-

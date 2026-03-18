@@ -2,108 +2,101 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mutex>
 
 namespace tickwire
 {
-
-    //We need to initialize Winsock once per process
-    static bool ensure_winsock_initialized()
+    // FIX: use std::call_once to make Winsock initialization thread-safe.
+    // The original used a plain bool with no synchronization — two threads
+    // calling open_udp() simultaneously would both read false, both call
+    // WSAStartup(), and both write true: a data race on a non-atomic variable.
+    static bool ensure_winsock_initialized() noexcept
     {
-        static bool initialized = false;
+        static std::once_flag flag;
+        static bool           success = false;
 
-        if (!initialized)
-        {
+        std::call_once(flag, [] {
             WSADATA data{};
-            if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
-            {
-                return false;
-            }
-            initialized = true;
-        }
-        return true;
+            success = (WSAStartup(MAKEWORD(2, 2), &data) == 0);
+        });
+
+        return success;
     }
-    bool Socket::open_udp(std::uint16_t port) {
-        if (!ensure_winsock_initialized()) {
+
+    bool Socket::open_udp(std::uint16_t port) noexcept
+    {
+        if (!ensure_winsock_initialized())
             return false;
-        }
 
         SOCKET sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (sock == INVALID_SOCKET) {
-            handle_ = -1;
+        if (sock == INVALID_SOCKET)
+        {
+            handle_ = INVALID_HANDLE;
             return false;
         }
 
         sockaddr_in addr{};
-        addr.sin_family = AF_INET;
+        addr.sin_family      = AF_INET;
         addr.sin_addr.s_addr = INADDR_ANY;
-        addr.sin_port = htons(port);
+        addr.sin_port        = htons(port);
 
-        if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-            ::closesocket(sock);
-            handle_ = -1;
-            return false;
-        }
-
-
-        handle_ = static_cast<int>(sock);
-        u_long mode{1};
-        ioctlsocket(sock,FIONBIO,&mode);
-        return true;
-    }
-
-    bool Socket::receive(uint8_t* buffer,
-                     std::size_t buffer_size,
-                     TickWireAddress& sender,
-                     std::size_t& received)
-    {
-        sockaddr_storage addr{};
-        int addr_len = sizeof(addr);
-
-        int result = recvfrom(handle_,
-                              reinterpret_cast<char*>(buffer),
-                              static_cast<int>(buffer_size),
-                              0,
-                              reinterpret_cast<sockaddr*>(&addr),
-                              &addr_len);
-
-        if (result <= 0)
-            return false;
-
-        received = static_cast<std::size_t>(result);
-
-        from_sockaddr(reinterpret_cast<sockaddr*>(&addr),
-                      addr_len,
-                      sender);
-
-        return true;
-    }
-
-    int Socket::send(const void* data, int size, const void* addr, int addr_len)
-    {
-        if (handle_ == -1)
+        if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR)
         {
-            return -1;
+            ::closesocket(sock);
+            handle_ = INVALID_HANDLE;
+            return false;
         }
 
-        int sent = ::sendto(static_cast<SOCKET>(handle_),
+        // Set non-blocking mode
+        u_long mode = 1;
+        ioctlsocket(sock, FIONBIO, &mode);
+
+        // FIX: store as uintptr_t, not int.
+        // SOCKET is UINT_PTR on 64-bit Windows (8 bytes).
+        // Casting to int truncates the upper 32 bits, silently corrupting
+        // the handle for any high-valued socket descriptor.
+        handle_ = static_cast<uintptr_t>(sock);
+        return true;
+    }
+
+    int Socket::receive(void* buffer, int buffer_size, void* addr, int* addr_len) noexcept
+    {
+        if (handle_ == INVALID_HANDLE)
+            return -1;
+
+        return recvfrom(
+            static_cast<SOCKET>(handle_),
+            static_cast<char*>(buffer),
+            buffer_size,
+            0,
+            reinterpret_cast<sockaddr*>(addr),
+            addr_len
+        );
+    }
+
+    int Socket::send(const void* data, int size, const void* addr, int addr_len) noexcept
+    {
+        if (handle_ == INVALID_HANDLE)
+            return -1;
+
+        int sent = ::sendto(
+            static_cast<SOCKET>(handle_),
             static_cast<const char*>(data),
             size,
             0,
             reinterpret_cast<const sockaddr*>(addr),
-            addr_len);
+            addr_len
+        );
 
-        if (sent == SOCKET_ERROR)
-        {
-            return -1;
-        }
-        return sent;
+        return (sent == SOCKET_ERROR) ? -1 : sent;
     }
 
-
-    void Socket::close() {
-        if (handle_ != -1) {
+    void Socket::close() noexcept
+    {
+        if (handle_ != INVALID_HANDLE)
+        {
             ::closesocket(static_cast<SOCKET>(handle_));
-            handle_ = -1;
+            handle_ = INVALID_HANDLE;
         }
     }
 
