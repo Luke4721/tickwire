@@ -1,47 +1,41 @@
-cmake_minimum_required(VERSION 3.21)
-project(tickwire LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.16)
+project(TickWire)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_library(tickwire STATIC
-        src/dummy.cpp
-        include/tickwire/socket.hpp
-        src/platform/socket_posix.cpp
-        src/platform/socket_win32.cpp
-        src/socket.cpp
-        include/tickwire/address.h
+include_directories(include)
+
+# Common sources
+set(COMMON_SOURCES
         src/address.cpp
-        include/tickwire/packet.h
-        include/tickwire/buffer_pool.h
-        include/tickwire/packet_buffer.h
         src/buffer_pool.cpp
-        include/tickwire/spsc_queue.h)
-
-target_include_directories(tickwire
-        PUBLIC
-        ${PROJECT_SOURCE_DIR}/include
+        src/network_receiver.cpp
+        src/worker.cpp
 )
 
-target_sources(tickwire
-        PRIVATE
-        src/dummy.cpp
+# Platform-specific
+if (WIN32)
+    set(PLATFORM_SOURCES
+            src/platform/socket_win32.cpp
+    )
+elseif(UNIX)
+    set(PLATFORM_SOURCES
+            src/platform/socket_posix.cpp
+    )
+endif()
+
+# Main app
+add_executable(tickwire_app
+        src/main.cpp
+        ${COMMON_SOURCES}
+        ${PLATFORM_SOURCES}
 )
 
-target_sources(tickwire PRIVATE src/address.cpp)
-if (WIN32 OR MINGW)
-    message(STATUS "Building TickWire with Windows sockets backend")
-    target_sources(tickwire PRIVATE src/platform/socket_win32.cpp)
-else()
-    message(STATUS "Building TickWire with POSIX sockets backend")
-    target_sources(tickwire PRIVATE src/platform/socket_posix.cpp)
-endif()
+# Benchmark
+add_executable(tickwire_benchmark
+        src/benchmark.cpp
+        ${COMMON_SOURCES}
+)
 
-target_sources(tickwire PRIVATE src/socket.cpp)
-if (WIN32 OR MINGW)
-    target_link_libraries(tickwire PRIVATE ws2_32)
-endif()
-
-target_sources(tickwire PRIVATE src/buffer_pool.cpp)
-
+# 🔥 Required for Windows sockets
+target_link_libraries(tickwire_app ws2_32)

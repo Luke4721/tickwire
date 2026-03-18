@@ -44,28 +44,38 @@ namespace tickwire
             return false;
         }
 
+
         handle_ = static_cast<int>(sock);
+        u_long mode{1};
+        ioctlsocket(sock,FIONBIO,&mode);
         return true;
     }
 
-    int Socket::receive(void* buffer, int buffer_size, void* addr_storage, int* addr_len)
+    bool Socket::receive(uint8_t* buffer,
+                     std::size_t buffer_size,
+                     TickWireAddress& sender,
+                     std::size_t& received)
     {
-        if (handle_ == -1)
-        {
-            return -1;
-        }
-        int received = ::recvfrom(static_cast<SOCKET>(handle_),
-            static_cast<char*>(buffer),
-            buffer_size,
-            0,
-            reinterpret_cast<sockaddr*>(addr_storage),
-            addr_len);
+        sockaddr_storage addr{};
+        int addr_len = sizeof(addr);
 
-        if (received == SOCKET_ERROR)
-        {
-            return -1;
-        }
-        return received;
+        int result = recvfrom(handle_,
+                              reinterpret_cast<char*>(buffer),
+                              static_cast<int>(buffer_size),
+                              0,
+                              reinterpret_cast<sockaddr*>(&addr),
+                              &addr_len);
+
+        if (result <= 0)
+            return false;
+
+        received = static_cast<std::size_t>(result);
+
+        from_sockaddr(reinterpret_cast<sockaddr*>(&addr),
+                      addr_len,
+                      sender);
+
+        return true;
     }
 
     int Socket::send(const void* data, int size, const void* addr, int addr_len)

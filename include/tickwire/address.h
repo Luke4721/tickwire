@@ -28,7 +28,7 @@ namespace tickwire
 
 
     // Convert from OS sockaddr storage into TickWireAddress.
-    bool from_sockaddr(const void* addr, TickWireAddress& out);
+    bool from_sockaddr(const void* addr,int addr_len, TickWireAddress& out);
 
     // Convert TickWireAddress back into OS sockaddr form (for send).
     bool to_sockaddr(const TickWireAddress& in, void* addr, int& addr_len);

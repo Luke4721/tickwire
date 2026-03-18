@@ -1,16 +1,43 @@
-# TickWire
+# TickWire — Low Latency Networking Library (C++)
 
-TickWire is a deterministic, low-latency UDP transport core designed for
-time-sensitive systems such as multiplayer servers and real-time simulations.
+TickWire is a minimal, performance-focused networking system built in modern C++.
+
+## Features
+
+* Fixed-size packet buffer pool (no heap allocations in hot path)
+* Lock-free Single Producer Single Consumer (SPSC) queue
+* Non-blocking UDP socket abstraction (Win32)
+* Multi-threaded pipeline (network → worker)
+* Deterministic memory usage
+* Metrics and observability
+
+## Architecture
+
+Socket → BufferPool → PacketBuffer → SPSC Queue → Worker → Release
+
+## Benchmark
+
+Processes millions of packets per second depending on hardware.
 
 ## Design Goals
 
-- No dynamic allocation in the hot path
-- Explicit ownership and lifetime of packet buffers
-- Fixed-size pooled memory
-- Bounded queues and predictable latency
-- Early timestamping at kernel boundary
-- Transport-layer only (no protocol assumptions)
+* Low latency
+* Predictable performance
+* Explicit memory ownership
+* Minimal abstraction overhead
 
-TickWire is intentionally minimal. Higher-level reliability or streaming
-layers are designed to sit above the core, not inside it.
+## Build
+
+```bash
+mkdir build
+cd build
+cmake ..
+make
+```
+
+## Future Work
+
+* Linux (POSIX) support
+* Packet prioritization
+* Reliability layer over UDP
+* GUI visualization

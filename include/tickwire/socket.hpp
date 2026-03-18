@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 
+#include "address.h"
+
 namespace tickwire
 {
     class Socket // Responsible for RAII (Resource Acquisition is Initialization)
@@ -24,7 +26,7 @@ namespace tickwire
 
         // Receive raw bytes into provided buffer.
         // Returns number of bytes received, or -1 on failure.
-        int receive(void* buffer, int buffer_size, void* addr_storage,int* addr_len);
+        bool receive(uint8_t* buffer, size_t buffer_size, TickWireAddress& sender, size_t& received);
 
         // Send raw bytes to destination address.
         // Returns number of bytes sent, or -1 on failure
